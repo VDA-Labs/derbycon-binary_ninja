@@ -2,8 +2,7 @@ import sys, os, binaryninja, pefile, struct, binascii
 
 DLLDIR = "/Users/joshstroschein/Library/Application Support/Binary Ninja/plugins/dlls"
 
-addr_resolve_api = 0x40175E
-addr_resolve_module = 0x401728
+addr_resolve_api = 0x40175e
 
 # Modules to search for
 modules = [
@@ -45,7 +44,7 @@ def create_api_hash(export_name):
 
 # This creates a hash from the list of potential modules to be compared
 # against the hash used in the binary
-def resolve_modules(module_hash):
+def resolve_module_by_hash(module_hash):
 
     for dll in modules:
 
@@ -60,10 +59,10 @@ def resolve_modules(module_hash):
     return None
 
 # Once a DLL is identified, this checks an array of hashes to resolve the API calls
-def resolve_module_apis(view, function, dll_name, api_hash_src, api_hash_dst):
+def resolve_module_apis(view, function, module_name, api_hash_src, api_hash_dst):
 
     #Load dll
-    filename = os.path.join(DLLDIR, dll_name)
+    filename = os.path.join(DLLDIR, module_name)
 
     if not os.path.exists(filename):
         print "[!] ERROR Loading DLL"
@@ -79,19 +78,14 @@ def resolve_module_apis(view, function, dll_name, api_hash_src, api_hash_dst):
 
             if not exp.name is None:
 
-                hash_cmp = create_api_hash(exp.name)
+                api_hash_cmp = create_api_hash(exp.name)
 
-                if hex(api_hash) == hex(hash_cmp):
-                    #FIXME: doesn't work? That is, can't comment in a data section?
-                    #function.set_comment(api_hash_dst, "josh")
+                if api_hash == api_hash_cmp:
 
                     view.define_auto_symbol(binaryninja.Symbol(binaryninja.FunctionSymbol, api_hash_dst, exp.name))
-                    #print data_sym, hex(api_hash_dst)
-
                     api_hash_dst = api_hash_dst + 4
 
         api_hash_src = api_hash_src + 4
-
         api_hash = view.read(api_hash_src, 4)
         api_hash = struct.unpack("<I", api_hash)[0]
 
@@ -110,16 +104,16 @@ def resolve_calls(view):
 
                         il_module_hash = main.get_reg_value_at(view.arch, il.address, "ebx").value
 
-                        module_name = resolve_modules(il_module_hash)
+                        module_name = resolve_module_by_hash(il_module_hash)
 
                         if not module_name is None:
 
                             main.set_comment(il.address, module_name)
 
                             #get the source/destination for the API hashes
-                            api_src_hash = main.get_reg_value_at(view.arch, il.address, "esi").value
-                            api_dst_hash = main.get_reg_value_at(view.arch, il.address, "edi").value
+                            api_hash_src = main.get_reg_value_at(view.arch, il.address, "esi").value
+                            api_hash_dst = main.get_reg_value_at(view.arch, il.address, "edi").value
 
-                            resolve_module_apis(view, main, module_name, api_src_hash, api_dst_hash)
+                            resolve_module_apis(view, main, module_name, api_hash_src, api_hash_dst)
 
 binaryninja.PluginCommand.register("Resolve API Calls", "This determines API calls by module used.", resolve_calls)
