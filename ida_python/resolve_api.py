@@ -52,8 +52,6 @@ def resolve_module_by_hash(module_hash):
 
         if result == module_hash:
 
-            print "[!] Hash found for ", dll
-
             return dll
 
     return None
