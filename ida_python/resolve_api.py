@@ -1,16 +1,22 @@
-import pefile
-from idautils import *
-from idc import *
+import pefile, idautils, idc
 
-DLLDIR = "dlls"
+DLLDIR = "/Users/joshstroschein/Desktop/BinaryNinja Work/Python Script/ida_python/dlls"
 
-# Rotate left: 0b1001 --> 0b0011
+addr_resolve_module = 0x401728
+
+# Modules to search for
+modules = [
+    "kernel32.dll",
+    "advapi.dll",
+    "ntdll.dll",
+]
+
 # Source: http://www.falatic.com/index.php/108/python-and-bitwise-rotation
 rol = lambda val, r_bits, max_bits: \
     (val << r_bits%max_bits) & (2**max_bits-1) | \
     ((val & (2**max_bits-1)) >> (max_bits-(r_bits%max_bits)))
 
-#Creates the hash based off of dll name
+# Creates the hash based off of dll name
 def create_module_hash(dll_name):
     result = 0x00000000
 
@@ -36,16 +42,27 @@ def create_api_hash(export_name):
 
     return api_hash
 
+# This creates a hash from the list of potential modules to be compared
+# against the hash used in the binary
+def resolve_module_by_hash(module_hash):
+
+    for dll in modules:
+
+        result = create_module_hash(dll)
+
+        if result == module_hash:
+
+            print "[!] Hash found for ", dll
+
+            return dll
+
+    return None
+
 # Once a DLL is identified, this checks an array of hashes to resolve the API calls
-def resolve_apis(dll_name, head):
-
-    api_hashes = idc.NextHead(head)
-
-    api_hash_src = GetOperandValue(api_hashes,1)
-    api_hash_dst = GetOperandValue(idc.NextHead(api_hashes),1)
+def resolve_module_apis(module_name, api_hash_src, api_hash_dst):
 
     #Load dll
-    filename = os.path.join(DLLDIR, dll_name)
+    filename = os.path.join(DLLDIR, module_name)
 
     if not os.path.exists(filename):
         print "[!] ERROR Loading DLL"
@@ -59,43 +76,16 @@ def resolve_apis(dll_name, head):
 
             if not exp.name is None:
 
-                api_hash_gen = create_api_hash(exp.name)
-                #print "Hash Found: ", hex(api_hash), " -- ", hex(api_hash_gen)
-                if hex(api_hash) == hex(api_hash_gen):
-                    print "Hash Found: ", hex(api_hash), " -- ", hex(api_hash_gen)
+                api_hash_cmp = create_api_hash(exp.name)
+
+                if api_hash == api_hash_cmp:
                     MakeComm(api_hash_dst, exp.name)
-                    #MakeName(api_hash_dst, export_name)
+                    #@FIXME: conflicts in names
+                    #MakeName(api_hash_dst, "HASH_" + exp.name)
                     api_hash_dst = api_hash_dst + 4
 
         api_hash_src = api_hash_src + 4
         api_hash = Dword(api_hash_src)
-
-# This creates a hash from the list of potential modules to be compared
-# against the hash used in the binary
-def resolve_module_and_calls(module_hash, head):
-
-    for dll in modules:
-
-        result = create_module_hash(dll)
-
-        if result == module_hash:
-
-            MakeComm(head, dll)
-
-            resolve_apis(dll, head)
-
-
-addr_reslove_api = 0x40175E
-addr_resolve_module = 0x401728
-
-# Modules to search for
-modules = [
-    "kernel32.dll",
-    "advapi.dll",
-    "ntdll.dll",
-]
-
-hashes_processed = []
 
 #Entry point, look for specific function call
 for seg_ea in Segments():
@@ -108,12 +98,19 @@ for seg_ea in Segments():
 
             if isCode(GetFlags(head)):
                 if GetMnem(head) == 'call':
+
                     call_addr = GetOperandValue(head,0)
 
                     if call_addr == addr_resolve_module:
 
-                        module_hash = GetOperandValue(idc.PrevHead(head),1)
+                        module_name = resolve_module_by_hash(GetOperandValue(idc.PrevHead(head),1))
 
-                        resolve_module_and_calls(module_hash, head)
+                        if not module_name is None:
+                            print "[*] Resolving calls for ", module_name
 
-                        #hashes_processed.append(module_hash)
+                            api_hashes = idc.NextHead(head)
+
+                            api_hash_src = GetOperandValue(api_hashes,1)
+                            api_hash_dst = GetOperandValue(idc.NextHead(api_hashes),1)
+
+                            resolve_module_apis(module_name, api_hash_src, api_hash_dst)
